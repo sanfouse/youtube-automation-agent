@@ -223,6 +223,10 @@ class AIVideoGenerator {
   async generateImage(prompt, imagePath) {
     await fs.mkdir(path.dirname(imagePath), { recursive: true });
 
+    if ((process.env.IMAGE_PROVIDER || '').toLowerCase() === 'manual') {
+      return await this.generateManualImage(prompt, imagePath);
+    }
+
     if (this.openai) {
       return await this.generateOpenAIImage(prompt, imagePath);
     }
@@ -232,6 +236,44 @@ class AIVideoGenerator {
     }
 
     return await this.generatePollinationsImage(prompt, imagePath);
+  }
+
+  // Human-in-the-loop image mode: the operator generates each image by hand
+  // in whatever web UI they like (quality/cost tradeoff they've chosen over
+  // Pollinations/paid providers) and drops the file into the inbox directory,
+  // named by a hash of the exact prompt. Every requested prompt is logged to
+  // prompts.jsonl so it's easy to see what's still needed; a missing image
+  // throws (caller falls back to a gradient placeholder for just that scene)
+  // instead of blocking the rest of the production. Re-running generation for
+  // the same scene later (e.g. via scene-repair-service's "repair scene")
+  // picks up the now-supplied file automatically, since the hash is stable.
+  async generateManualImage(prompt, imagePath) {
+    const crypto = require('crypto');
+    const hash = crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 16);
+    const inboxDir = process.env.MANUAL_IMAGE_INBOX || path.join(__dirname, '..', 'data', 'manual-images');
+    await fs.mkdir(inboxDir, { recursive: true });
+
+    await fs.appendFile(
+      path.join(inboxDir, 'prompts.jsonl'),
+      `${JSON.stringify({ hash, prompt, requestedAt: new Date().toISOString() })}\n`
+    );
+
+    const candidates = ['.png', '.jpg', '.jpeg', '.webp'].map((ext) => path.join(inboxDir, `${hash}${ext}`));
+    for (const candidate of candidates) {
+      try {
+        await fs.access(candidate);
+        await fs.copyFile(candidate, imagePath);
+        return imagePath;
+      } catch {
+        // not supplied under this extension yet — try the next one
+      }
+    }
+
+    throw new Error(
+      `Manual image not supplied yet. Save the generated image as one of:\n` +
+      candidates.map((c) => `  ${c}`).join('\n') +
+      `\nPrompt: ${prompt}`
+    );
   }
 
   // Free, keyless fallback: https://image.pollinations.ai (no card, no signup,

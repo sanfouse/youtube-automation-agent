@@ -44,6 +44,23 @@ const PROVIDERS = {
     models: ['glm-5.3', 'glm-5.2', 'glm-5.1'],
     envKey: 'GLM_API_KEY',
   },
+  // Local shim (utils/claude-cli-shim.js) that forwards OpenAI-shaped chat
+  // completions to headless `claude -p`, billed against the Claude Pro/Max
+  // subscription login instead of a paid Anthropic API key. Never auto-picked
+  // by the env-scan loop below unless CLAUDECODE_SHIM_KEY is set — the
+  // script-writer agent selects it explicitly via credentials.aiProvider.
+  claudecode: {
+    name: 'Claude Code CLI',
+    baseURL: process.env.CLAUDECODE_SHIM_URL || 'http://127.0.0.1:8787/v1',
+    defaultModel: 'claude-code-cli',
+    models: ['claude-code-cli'],
+    envKey: 'CLAUDECODE_SHIM_KEY',
+    // Never picked up by the env-scan loop in _init — only usable via an
+    // explicit credentials.aiProvider.provider === 'claudecode' request, so
+    // setting CLAUDECODE_SHIM_KEY in .env can't silently hijack every other
+    // agent's default (Gemini) provider.
+    autoDetect: false,
+  },
 };
 
 class AITextService {
@@ -67,6 +84,7 @@ class AITextService {
     }
 
     for (const [, preset] of Object.entries(PROVIDERS)) {
+      if (preset.autoDetect === false) continue;
       const key = process.env[preset.envKey];
       if (key) {
         return this._initOpenAICompatible(preset, key);

@@ -7,7 +7,20 @@ class ScriptWriterAgent {
     this.credentials = credentials;
     this.logger = new Logger('ScriptWriter');
     this.templates = this.loadTemplates();
-    this.aiTextService = new AITextService(credentials?.credentials || credentials || {});
+    // Scripts specifically go through the local Claude Code CLI shim (Pro/Max
+    // subscription login, no paid Anthropic API key) instead of the channel's
+    // default text provider — every other agent keeps using that default
+    // (e.g. free-tier Gemini) so per-agent overhead from headless `claude -p`
+    // calls stays limited to one call per video.
+    const baseCredentials = credentials?.credentials || credentials || {};
+    this.aiTextService = new AITextService({
+      ...baseCredentials,
+      aiProvider: {
+        provider: 'claudecode',
+        apiKey: process.env.CLAUDECODE_SHIM_KEY || 'local-shim',
+        model: 'claude-code-cli',
+      },
+    });
   }
 
   async initialize() {

@@ -9,6 +9,7 @@
     "walkthrough": "node walkthrough.js",
     "growth:snapshot": "node scripts/growth/snapshot-github.js",
     "scheduler": "node schedules/daily-automation.js",
+    "claude-shim": "node utils/claude-cli-shim.js",
     "test": "node test.js",
     "agent:strategy": "node agents/content-strategy-agent.js",
     "agent:script": "node agents/script-writer-agent.js",

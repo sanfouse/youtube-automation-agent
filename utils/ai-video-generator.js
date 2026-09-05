@@ -195,7 +195,11 @@ class AIVideoGenerator {
     this.logger.info(`Generating ${count} visual assets with style: ${style}`);
 
     try {
-      if (!this.openai && !this.gemini) {
+      // Gradient placeholders only when explicitly requested — otherwise every
+      // request falls through to the free, keyless Pollinations provider in
+      // generateImage() below, so a missing OpenAI/Gemini key never blocks
+      // real AI images.
+      if ((process.env.IMAGE_PROVIDER || '').toLowerCase() === 'simulation') {
         return await this.simulateVisualAssets(prompt, style, count);
       }
 
@@ -227,7 +231,48 @@ class AIVideoGenerator {
       return await this.generateGeminiImage(prompt, imagePath);
     }
 
-    throw new Error('No image generation provider configured');
+    return await this.generatePollinationsImage(prompt, imagePath);
+  }
+
+  // Free, keyless fallback: https://image.pollinations.ai (no card, no signup,
+  // Flux model, rate-limited to ~1 request/15s for anonymous callers). Used
+  // whenever neither a paid OpenAI nor a paid-tier Gemini image key is set.
+  async generatePollinationsImage(prompt, imagePath) {
+    await this._throttlePollinations();
+
+    const seed = Math.floor(Math.random() * 1_000_000_000);
+    const query = ['width=1280', 'height=720', 'model=flux', `seed=${seed}`, 'nologo=false'].join('&');
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${query}`;
+
+    const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 120000 });
+    const imageBuffer = Buffer.from(response.data);
+    const metadata = await sharp(imageBuffer, { failOn: 'error' }).metadata();
+    if (!metadata.width || !metadata.height) {
+      throw new Error('Pollinations image generation returned an invalid image asset');
+    }
+
+    const extension = path.extname(imagePath).toLowerCase();
+    const output = sharp(imageBuffer, { failOn: 'error' });
+    if (extension === '.jpg' || extension === '.jpeg') {
+      await output.jpeg({ quality: 92 }).toFile(imagePath);
+    } else if (extension === '.webp') {
+      await output.webp({ quality: 92 }).toFile(imagePath);
+    } else {
+      await output.png().toFile(imagePath);
+    }
+    return imagePath;
+  }
+
+  // Anonymous Pollinations access is capped at ~1 request/15s; space calls out
+  // process-wide so a batch of scene images doesn't just start 429ing.
+  async _throttlePollinations() {
+    const minIntervalMs = Number(process.env.POLLINATIONS_MIN_INTERVAL_MS || 16000);
+    const now = Date.now();
+    const nextAllowed = (AIVideoGenerator._lastPollinationsCallAt || 0) + minIntervalMs;
+    if (nextAllowed > now) {
+      await new Promise((resolve) => setTimeout(resolve, nextAllowed - now));
+    }
+    AIVideoGenerator._lastPollinationsCallAt = Date.now();
   }
 
   async generateOpenAIImage(prompt, imagePath) {
